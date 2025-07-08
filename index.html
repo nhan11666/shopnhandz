@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ShopNhanDz</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <img src="logoTN.jpg" alt="Logo TN" />
+    </div>
+
+    <h1>Cày Thuê Free Fire</h1>
+    <p>Chuyên cày thuê bởi admin NhânDz</p>
+
+    <form id="loginForm">
+      <label for="account">Nhập Tài Khoản:</label>
+      <input type="text" id="account" required />
+
+      <label for="password">Nhập Mật Khẩu:</label>
+      <input type="password" id="password" required />
+
+      <button type="submit">Đăng Nhập</button>
+    </form>
+
+    <div id="thongBao"></div>
+    <div id="logTaiKhoan" style="display:none;">
+      <h3>Danh sách tài khoản đã yêu cầu:</h3>
+      <ul id="logList"></ul>
+    </div>
+
+    <div class="dichvu">
+      <h2>Dịch Vụ Hot</h2>
+      <div class="goidichvu">
+        <img src="dong.jpg" alt="Rank Đồng">
+        <p>Rank Đồng → Thách Đấu</p>
+      </div>
+      <div class="goidichvu">
+        <img src="quaydo.jpg" alt="Quay đồ">
+        <p>Quay đồ auto trúng – Nhân phẩm 100%</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const accounts = [];
+    const adminAcc = "nhanz";
+    const adminPass = "123";
+
+    document.getElementById("loginForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+
+      const acc = document.getElementById("account").value;
+      const pass = document.getElementById("password").value;
+
+      if (acc === adminAcc && pass === adminPass) {
+        document.getElementById("thongBao").innerText = "Đăng nhập với quyền Admin.";
+        document.getElementById("logTaiKhoan").style.display = "block";
+
+        const logList = document.getElementById("logList");
+        logList.innerHTML = "";
+        accounts.forEach(function(item) {
+          const li = document.createElement("li");
+          li.textContent = `Tài khoản: ${item.account} | Mật khẩu: ${item.password}`;
+          logList.appendChild(li);
+        });
+      } else {
+        document.getElementById("thongBao").innerText = `Đã yêu cầu cày thuê tài khoản ${acc}. Vui lòng đợi admin duyệt.`;
+        accounts.push({ account: acc, password: pass });
+        document.getElementById("loginForm").reset();
+      }
+    });
+  </script>
+</body>
+</html>

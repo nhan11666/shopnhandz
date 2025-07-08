@@ -1,0 +1,127 @@
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f3f4f6;
+  margin: 0;
+  padding: 0;
+  animation: fadeIn 1s ease-in-out;
+}
+
+.container {
+  max-width: 500px;
+  margin: 30px auto;
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.logo img {
+  width: 120px;
+  height: auto;
+  margin-bottom: 10px;
+  animation: bounce 1.2s infinite;
+}
+
+h1 {
+  color: #333;
+  margin-bottom: 5px;
+}
+
+p {
+  color: #555;
+  margin-top: 0;
+}
+
+label {
+  display: block;
+  margin-top: 15px;
+  text-align: left;
+  color: #444;
+}
+
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 10px;
+  margin-top: 6px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+}
+
+button {
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 10px;
+  cursor: pointer;
+  width: 100%;
+  margin-top: 20px;
+  font-size: 16px;
+  transition: background 0.3s;
+}
+
+button:hover {
+  background-color: #218838;
+}
+
+#thongBao {
+  margin-top: 20px;
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+#logTaiKhoan {
+  margin-top: 30px;
+  text-align: left;
+}
+
+#logTaiKhoan h3 {
+  color: #333;
+  margin-bottom: 10px;
+}
+
+#logList li {
+  background: #eee;
+  padding: 8px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  list-style: none;
+}
+
+.dichvu {
+  margin-top: 40px;
+}
+
+.dichvu h2 {
+  color: #444;
+  margin-bottom: 20px;
+}
+
+.goidichvu {
+  margin-bottom: 15px;
+}
+
+.goidichvu img {
+  width: 100px;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
+}
+
+.goidichvu p {
+  margin-top: 8px;
+  font-weight: bold;
+  color: #444;
+}
+
+@keyframes fadeIn {
+  from {opacity: 0;}
+  to {opacity: 1;}
+}
+
+@keyframes bounce {
+  0%, 100% {transform: translateY(0);}
+  50% {transform: translateY(-5px);}
+}
