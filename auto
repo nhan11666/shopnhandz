@@ -1,0 +1,626 @@
+local ffi = require 'ffi'
+local imgui = require 'mimgui'
+local sampev = require 'lib.samp.events'
+require 'lib.moonloader'
+require 'lib.sampfuncs'
+
+local isGuiOpen = imgui.new.bool(false)
+
+-- Bien luu toa do
+local toa_do = {
+    cay1 = {x = 0, y = 0, z = 0},
+    cay2 = {x = 0, y = 0, z = 0},
+    cay3 = {x = 0, y = 0, z = 0},
+    cay4 = {x = 0, y = 0, z = 0},
+    cay5 = {x = 0, y = 0, z = 0},
+    laynuoc1 = {x = 0, y = 0, z = 0},
+    laynuoc2 = {x = 0, y = 0, z = 0},
+    laynuoc3 = {x = 0, y = 0, z = 0},
+    laynuoc4 = {x = 0, y = 0, z = 0},
+    laynuoc5 = {x = 0, y = 0, z = 0}
+}
+
+-- Bien auto farm
+local autoFarm = imgui.new.bool(false)
+local currentTarget = 1
+local farmStep = 1 -- 1: Gieo hat, 2: Lay nuoc, 3: Tuoi nuoc, 4: Cho thu hoach, 5: Thu hoach
+local isMoving = false
+local commandExecuted = false
+local stuckCheckTime = 0
+local lastPosition = {x = 0, y = 0, z = 0}
+local stuckCounter = 0
+
+-- Bien thoi gian va delay
+local gieoHatStartTime = 0
+local layNuocTime = 0
+local waterValidTime = 120 -- 2 phut hieu luc nuoc
+local harvestWaitTime = 365 -- 6 phut 5 giay cho thu hoach
+local lastChatTime = 0
+local actionDelay = 3000 -- 3 giay delay giua cac hanh dong
+local lastActionTime = 0
+local waitingForAction = false
+
+-- Bien cho auto dialog
+local autoDialog = imgui.new.bool(false)
+local dialogChoice = imgui.new.int(0)
+
+-- Ten lua chon hat giong
+local hatGiongOptions = {"Ngu Coc", "Lua", "Khoai Tay", "Cai Bap", "Ca Chua"}
+
+-- Thu tu di chuyen cho tung buoc
+local sequences = {
+    gieo_hat = {"cay1", "cay2", "cay3", "cay4", "cay5"},
+    lay_nuoc = {"laynuoc5"}, -- Chi can lay nuoc 1 lan
+    tuoi_nuoc = {"cay1", "cay2", "cay3", "cay4", "cay5"},
+    thu_hoach = {"cay1", "cay2", "cay3", "cay4", "cay5"}
+}
+
+-- Ten file luu
+local filename = "auto_farm_config.lua"
+
+-- Ham chat message khong spam
+function safeChatMessage(message)
+    local currentTime = os.clock()
+    if currentTime - lastChatTime >= 1 then -- Chi chat 1 lan/giay
+        sampAddChatMessage(message, -1)
+        lastChatTime = currentTime
+    end
+end
+
+-- Ham luu toa do vao file
+function saveToFile()
+    local file = io.open(filename, "w")
+    if file then
+        file:write("toa_do = {\n")
+        for key, coord in pairs(toa_do) do
+            file:write(string.format("    %s = { x = %.2f, y = %.2f, z = %.2f },\n", key, coord.x, coord.y, coord.z))
+        end
+        file:write(string.format("    dialog_choice = %d\n", dialogChoice[0]))
+        file:write("}")
+        file:close()
+        safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da luu cau hinh vao file ' .. filename)
+    else
+        safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}Khong the tao file ' .. filename)
+    end
+end
+
+-- Ham doc toa do tu file
+function loadFromFile()
+    local file = io.open(filename, "r")
+    if file then
+        local content = file:read("*all")
+        file:close()
+        
+        local func, err = loadstring(content)
+        if func then
+            func()
+            if _G.toa_do then
+                toa_do = _G.toa_do
+                if _G.dialog_choice then
+                    dialogChoice[0] = _G.dialog_choice
+                end
+                safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da tai cau hinh tu file ' .. filename)
+            else
+                safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}File khong chua du lieu hop le')
+            end
+        else
+            safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}Loi doc file: ' .. tostring(err))
+        end
+    else
+        safeChatMessage('{FFFF00}[Auto Farm]: {FFFFFF}Khong tim thay file ' .. filename .. ', su dung cau hinh mac dinh')
+    end
+end
+
+-- Ham di chuyen den toa do
+function moveToCoordinate(x, y, z)
+    if x ~= 0 or y ~= 0 or z ~= 0 then
+        taskGoToCoordAnyMeans(PLAYER_PED, x, y, z, 7, 0, false, -1, -1)
+        isMoving = true
+        commandExecuted = false
+        stuckCheckTime = os.clock()
+        
+        lastPosition.x, lastPosition.y, lastPosition.z = getCharCoordinates(PLAYER_PED)
+        stuckCounter = 0
+        
+        return true
+    end
+    return false
+end
+
+-- Ham kiem tra va xu ly stuck
+function checkAndHandleStuck()
+    if not isMoving then return end
+    
+    local currentTime = os.clock()
+    local px, py, pz = getCharCoordinates(PLAYER_PED)
+    
+    if currentTime - stuckCheckTime > 5 then -- Tang thoi gian kiem tra stuck
+        local distance = getDistanceBetweenCoords3d(px, py, pz, lastPosition.x, lastPosition.y, lastPosition.z)
+        
+        if distance < 1.0 then
+            stuckCounter = stuckCounter + 1
+            if stuckCounter < 3 then -- Chi thu 3 lan
+                safeChatMessage('{FFFF00}[Auto Farm]: {FFFFFF}Phat hien stuck! Thu lai lan ' .. stuckCounter)
+                
+                clearCharTasks(PLAYER_PED)
+                wait(1000)
+                
+                -- Thu di chuyen lai
+                local current_sequence = getCurrentSequence()
+                if current_sequence then
+                    local current_location = current_sequence[currentTarget]
+                    local target_coord = toa_do[current_location]
+                    taskGoToCoordAnyMeans(PLAYER_PED, target_coord.x, target_coord.y, target_coord.z, 7, 0, false, -1, -1)
+                end
+            else
+                -- Bo qua vi tri nay neu stuck qua nhieu
+                safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}Bo qua vi tri do stuck qua nhieu lan')
+                isMoving = false
+                currentTarget = currentTarget + 1
+                stuckCounter = 0
+            end
+        end
+        
+        lastPosition.x, lastPosition.y, lastPosition.z = px, py, pz
+        stuckCheckTime = currentTime
+    end
+end
+
+-- Ham lay sequence hien tai
+function getCurrentSequence()
+    if farmStep == 1 then
+        return sequences.gieo_hat
+    elseif farmStep == 2 then
+        return sequences.lay_nuoc
+    elseif farmStep == 3 then
+        return sequences.tuoi_nuoc
+    elseif farmStep == 5 then
+        return sequences.thu_hoach
+    end
+    return nil
+end
+
+-- Ham thuc hien lenh tai toa do
+function executeCommandsAtLocation(location)
+    if commandExecuted or waitingForAction then return end
+    
+    local currentTime = os.clock()
+    if currentTime - lastActionTime < actionDelay / 1000 then
+        return -- Chua du thoi gian delay
+    end
+    
+    local command = ""
+    
+    if farmStep == 1 then -- Gieo hat
+        if string.find(location, "cay") then
+            command = "/gieohat"
+        end
+    elseif farmStep == 2 then -- Lay nuoc
+        if location == "laynuoc5" then
+            command = "/laynuoc"
+            layNuocTime = os.clock()
+        end
+    elseif farmStep == 3 then -- Tuoi nuoc
+        if string.find(location, "cay") then
+            command = "/tuoinuoc"
+        end
+    elseif farmStep == 5 then -- Thu hoach
+        if string.find(location, "cay") then
+            -- Khong can lenh, thu hoach tu dong
+            safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Dang thu hoach tai ' .. getTenToaDo(location))
+        end
+    end
+    
+    if command ~= "" then
+        safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Thuc hien: ' .. command .. ' tai ' .. getTenToaDo(location))
+        sampSendChat(command)
+    end
+    
+    commandExecuted = true
+    waitingForAction = true
+    lastActionTime = currentTime
+    
+    -- Delay truoc khi chuyen sang vi tri tiep theo
+    lua_thread.create(function()
+        wait(actionDelay)
+        waitingForAction = false
+        
+        -- Chuyen sang vi tri tiep theo
+        currentTarget = currentTarget + 1
+        local current_sequence = getCurrentSequence()
+        if current_sequence and currentTarget > #current_sequence then
+            nextStep()
+        end
+    end)
+end
+
+-- Ham kiem tra da den toa do chua
+function isAtCoordinate(x, y, z, threshold)
+    local px, py, pz = getCharCoordinates(PLAYER_PED)
+    local distance = getDistanceBetweenCoords3d(px, py, pz, x, y, z)
+    return distance < (threshold or 3.0) -- Tang threshold len 3.0
+end
+
+-- Ham lay ten toa do
+function getTenToaDo(loai)
+    if loai == "cay1" then return "Cay 1"
+    elseif loai == "cay2" then return "Cay 2"
+    elseif loai == "cay3" then return "Cay 3"
+    elseif loai == "cay4" then return "Cay 4"
+    elseif loai == "cay5" then return "Cay 5"
+    elseif loai == "laynuoc1" then return "Lay nuoc 1"
+    elseif loai == "laynuoc2" then return "Lay nuoc 2"
+    elseif loai == "laynuoc3" then return "Lay nuoc 3"
+    elseif loai == "laynuoc4" then return "Lay nuoc 4"
+    elseif loai == "laynuoc5" then return "Lay nuoc 5"
+    end
+    return loai
+end
+
+-- Ham lay ten buoc hien tai
+function getCurrentStepName()
+    if farmStep == 1 then return "Gieo hat"
+    elseif farmStep == 2 then return "Lay nuoc"
+    elseif farmStep == 3 then return "Tuoi nuoc"
+    elseif farmStep == 4 then return "Cho thu hoach"
+    elseif farmStep == 5 then return "Thu hoach"
+    end
+    return "Khong xac dinh"
+end
+
+function saveToadoHienTai(loai)
+    local x, y, z = getCharCoordinates(PLAYER_PED)
+    toa_do[loai] = {x = x, y = y, z = z}
+    
+    local ten_loai = getTenToaDo(loai)
+    safeChatMessage(string.format('{00FF00}[Auto Farm]: {FFFFFF}Da luu toa do %s: %.2f, %.2f, %.2f', ten_loai, x, y, z))
+    saveToFile()
+end
+
+-- Ham xem toa do da luu
+function xemToadoDaLuu()
+    safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}=== TOA DO DA LUU ===')
+    for key, coord in pairs(toa_do) do
+        local ten_loai = getTenToaDo(key)
+        safeChatMessage(string.format('{FFFF00}%s: {FFFFFF}%.2f, %.2f, %.2f', ten_loai, coord.x, coord.y, coord.z))
+    end
+    safeChatMessage(string.format('{FFFF00}Hat giong: {FFFFFF}%s', hatGiongOptions[dialogChoice[0] + 1]))
+    safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}========================')
+end
+
+-- Ham kiem tra thoi gian va chuyen buoc
+function checkTimeAndStep()
+    local currentTime = os.clock()
+    
+    -- Kiem tra thoi gian nuoc het han (2 phut)
+    if farmStep == 3 and layNuocTime > 0 then
+        if currentTime - layNuocTime >= waterValidTime then
+            safeChatMessage('{FFFF00}[Auto Farm]: {FFFFFF}Nuoc het han! Quay lai lay nuoc...')
+            farmStep = 2
+            currentTarget = 1
+            isMoving = false
+            commandExecuted = false
+            waitingForAction = false
+            layNuocTime = 0
+            return
+        end
+    end
+    
+    -- Kiem tra thoi gian thu hoach (6 phut 5 giay tu luc gieo hat dau tien)
+    if farmStep == 4 and gieoHatStartTime > 0 then
+        if currentTime - gieoHatStartTime >= harvestWaitTime then
+            safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da den thoi gian thu hoach!')
+            farmStep = 5
+            currentTarget = 1
+            isMoving = false
+            commandExecuted = false
+            waitingForAction = false
+        end
+    end
+end
+
+-- Ham chuyen buoc tiep theo
+function nextStep()
+    if farmStep == 1 then -- Gieo hat xong -> Lay nuoc
+        farmStep = 2
+        currentTarget = 1
+        isMoving = false
+        commandExecuted = false
+        waitingForAction = false
+        safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Gieo hat hoan thanh! Chuyen sang lay nuoc...')
+    elseif farmStep == 2 then -- Lay nuoc xong -> Tuoi nuoc
+        farmStep = 3
+        currentTarget = 1
+        isMoving = false
+        commandExecuted = false
+        waitingForAction = false
+        safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Lay nuoc hoan thanh! Chuyen sang tuoi nuoc...')
+    elseif farmStep == 3 then -- Tuoi nuoc xong -> Cho thu hoach
+        farmStep = 4
+        currentTarget = 1
+        isMoving = false
+        commandExecuted = false
+        waitingForAction = false
+        local remainingTime = harvestWaitTime - (os.clock() - gieoHatStartTime)
+        if remainingTime > 0 then
+            safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Tuoi nuoc hoan thanh! Cho thu hoach con ' .. math.floor(remainingTime) .. ' giay...')
+        else
+            farmStep = 5
+            safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da den thoi gian thu hoach!')
+        end
+    elseif farmStep == 5 then -- Thu hoach xong -> Gieo hat (bat dau chu ky moi)
+        farmStep = 1
+        currentTarget = 1
+        isMoving = false
+        commandExecuted = false
+        waitingForAction = false
+        gieoHatStartTime = 0
+        layNuocTime = 0
+        safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Thu hoach hoan thanh! Bat dau chu ky moi...')
+    end
+end
+
+-- Xu ly dialog
+function sampev.onShowDialog(id, style, title, button1, button2, text)
+    if autoFarm[0] and autoDialog[0] then
+        -- Kiem tra dialog lua chon hat giong
+        if string.find(text, "Ngu Coc") or string.find(text, "Lua") or string.find(text, "Khoai Tay") then
+            safeChatMessage('{00FFFF}[Auto Dialog]: {FFFFFF}Phat hien dialog lua chon hat giong!')
+            
+            lua_thread.create(function()
+                wait(500)
+                sampSendDialogResponse(id, 1, dialogChoice[0], "")
+                
+                local selectedOption = hatGiongOptions[dialogChoice[0] + 1] or "Khong xac dinh"
+                safeChatMessage('{00FF00}[Auto Dialog]: {FFFFFF}Da chon: ' .. selectedOption)
+            end)
+            
+            return false
+        end
+        
+        -- Kiem tra dialog xac nhan gieo hat
+        if string.find(text, "Gieo") and string.find(text, "Huy") then
+            safeChatMessage('{00FFFF}[Auto Dialog]: {FFFFFF}Phat hien dialog xac nhan gieo hat!')
+            
+            lua_thread.create(function()
+                wait(500)
+                sampSendDialogResponse(id, 1, 0, "")
+                safeChatMessage('{00FF00}[Auto Dialog]: {FFFFFF}Da chon "Gieo"')
+            end)
+            
+            return false
+        end
+    end
+    
+    return true
+end
+
+-- Menu GUI
+imgui.OnFrame(
+    function() return isGuiOpen[0] end,
+    function()
+        imgui.SetNextWindowPos(imgui.ImVec2(400, 200), imgui.Cond.FirstUseEver)
+        imgui.SetNextWindowSize(imgui.ImVec2(400, 600), imgui.Cond.FirstUseEver)
+        imgui.PushStyleColor(imgui.Col.WindowBg, imgui.ImVec4(0.1, 0.1, 0.1, 1.0))
+        
+        if imgui.Begin('Auto Farm SAMP Mobile v4.1 Fixed', isGuiOpen, imgui.WindowFlags.NoCollapse) then
+            imgui.Text('=== AUTO FARM NANG CAP (FIXED) ===')
+            imgui.Separator()
+            
+            -- Checkbox auto dialog
+            if imgui.Checkbox('Tu dong chon dialog', autoDialog) then
+                if autoDialog[0] then
+                    safeChatMessage('{00FF00}[Auto Dialog]: {FFFFFF}Da bat tu dong chon dialog!')
+                else
+                    safeChatMessage('{FF0000}[Auto Dialog]: {FFFFFF}Da tat tu dong chon dialog.')
+                end
+            end
+            
+            -- Combo box chon hat giong
+            if autoDialog[0] then
+                imgui.Text('Chon loai hat giong:')
+                if imgui.Combo('##hatgiong', dialogChoice, hatGiongOptions, #hatGiongOptions) then
+                    local selectedOption = hatGiongOptions[dialogChoice[0] + 1]
+                    safeChatMessage('{00FFFF}[Dialog]: {FFFFFF}Da chon hat giong: ' .. selectedOption)
+                    saveToFile()
+                end
+            end
+            
+            -- Nut bat/tat auto farm
+            if imgui.Checkbox('Bat Auto Farm', autoFarm) then
+                if autoFarm[0] then
+                    -- Kiem tra toa do
+                    local hasCoordinates = false
+                    for key, coord in pairs(toa_do) do
+                        if coord.x ~= 0 or coord.y ~= 0 or coord.z ~= 0 then
+                            hasCoordinates = true
+                            break
+                        end
+                    end
+                    
+                    if hasCoordinates then
+                        -- Reset tat ca bien
+                        farmStep = 1
+                        currentTarget = 1
+                        isMoving = false
+                        commandExecuted = false
+                        waitingForAction = false
+                        gieoHatStartTime = 0
+                        layNuocTime = 0
+                        lastActionTime = 0
+                        stuckCounter = 0
+                        
+                        local selectedSeed = hatGiongOptions[dialogChoice[0] + 1] or "Ngu Coc"
+                        safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da bat! Hat giong: ' .. selectedSeed)
+                        safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Bat dau chu ky: Gieo hat -> Lay nuoc -> Tuoi nuoc -> Thu hoach')
+                        
+                        if autoDialog[0] then
+                            safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}Se tu dong chon dialog!')
+                        end
+                    else
+                        autoFarm[0] = false
+                        safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}Chua luu toa do nao! Hay luu toa do truoc.')
+                    end
+                else
+                    clearCharTasks(PLAYER_PED)
+                    safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}Da tat Auto Farm.')
+                end
+            end
+            
+            -- Hien thi trang thai
+            if autoFarm[0] then
+                local stepName = getCurrentStepName()
+                imgui.TextColored(imgui.ImVec4(0, 1, 1, 1), 'Buoc hien tai: ' .. stepName)
+                imgui.TextColored(imgui.ImVec4(1, 1, 0, 1), 'Vi tri: ' .. currentTarget .. '/5')
+                
+                if farmStep ~= 4 then
+                    local current_sequence = getCurrentSequence()
+                    if current_sequence and currentTarget <= #current_sequence then
+                        local current_location = current_sequence[currentTarget]
+                        local ten_location = getTenToaDo(current_location)
+                        
+                        if waitingForAction then
+                            imgui.TextColored(imgui.ImVec4(1, 0.5, 0, 1), 'Trang thai: Dang xu ly...')
+                        elseif isMoving then
+                            imgui.TextColored(imgui.ImVec4(1, 1, 0, 1), 'Trang thai: Dang di den ' .. ten_location)
+                        else
+                            imgui.TextColored(imgui.ImVec4(0, 1, 0, 1), 'Trang thai: Tai ' .. ten_location)
+                        end
+                    end
+                else
+                    -- Hien thi thoi gian cho thu hoach
+                    if gieoHatStartTime > 0 then
+                        local remainingTime = harvestWaitTime - (os.clock() - gieoHatStartTime)
+                        if remainingTime > 0 then
+                            imgui.TextColored(imgui.ImVec4(1, 1, 0, 1), string.format('Cho thu hoach: %.0f giay', remainingTime))
+                        else
+                            imgui.TextColored(imgui.ImVec4(0, 1, 0, 1), 'San sang thu hoach!')
+                        end
+                    end
+                end
+                
+                -- Hien thi thoi gian nuoc con lai
+                if layNuocTime > 0 and farmStep == 3 then
+                    local waterRemaining = waterValidTime - (os.clock() - layNuocTime)
+                    if waterRemaining > 0 then
+                        imgui.TextColored(imgui.ImVec4(0, 0, 1, 1), string.format('Nuoc con: %.0f giay', waterRemaining))
+                    else
+                        imgui.TextColored(imgui.ImVec4(1, 0, 0, 1), 'Nuoc het han!')
+                    end
+                end
+            else
+                imgui.TextColored(imgui.ImVec4(1, 0, 0, 1), 'Trang thai: Tat')
+            end
+            
+            imgui.Separator()
+            imgui.Text('=== LUU TOA DO CAY ===')
+            
+            -- Cac nut luu toa do cay
+            for i = 1, 5 do
+                if imgui.Button('Luu toa do Cay ' .. i, imgui.ImVec2(350, 25)) then
+                    saveToadoHienTai("cay" .. i)
+                end
+            end
+            
+            imgui.Separator()
+            imgui.Text('=== LUU TOA DO LAY NUOC ===')
+            
+            -- Cac nut luu toa do lay nuoc
+            for i = 1, 5 do
+                if imgui.Button('Luu toa do Lay nuoc ' .. i, imgui.ImVec2(350, 25)) then
+                    saveToadoHienTai("laynuoc" .. i)
+                end
+            end
+            
+            imgui.Separator()
+            
+            if imgui.Button('Xem toa do da luu', imgui.ImVec2(350, 30)) then
+                xemToadoDaLuu()
+            end
+            
+            imgui.Separator()
+            
+            if imgui.Button('Thoat menu', imgui.ImVec2(350, 30)) then
+                isGuiOpen[0] = false
+            end
+            
+            imgui.End()
+        end
+        imgui.PopStyleColor()
+    end
+)
+
+function main()
+    repeat wait(0) until isSampAvailable()
+    
+    -- Tai cau hinh tu file
+    loadFromFile()
+    
+    safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da tai thanh cong! Su dung /autofarm de mo menu.')
+    safeChatMessage('{00FFFF}[Auto Farm]: {FFFFFF}v4.1 FIXED - Khong spam chat, co nhip dieu!')
+    
+    -- Dang ky lenh
+    sampRegisterChatCommand('autofarm', function()
+        isGuiOpen[0] = not isGuiOpen[0]
+    end)
+    
+    -- Vong lap chinh
+    while true do
+        wait(100) -- Tang delay trong vong lap chinh
+        
+        -- Xu ly Auto Farm
+        if autoFarm[0] then
+            checkTimeAndStep()
+            
+            if farmStep ~= 4 and not waitingForAction then -- Khong lam gi trong buoc cho thu hoach va khi dang cho action
+                local current_sequence = getCurrentSequence()
+                if current_sequence and currentTarget <= #current_sequence then
+                    local current_location = current_sequence[currentTarget]
+                    local target_coord = toa_do[current_location]
+                    
+                    if target_coord.x ~= 0 or target_coord.y ~= 0 or target_coord.z ~= 0 then
+                        if not isMoving then
+                            if moveToCoordinate(target_coord.x, target_coord.y, target_coord.z) then
+                                local ten_location = getTenToaDo(current_location)
+                                safeChatMessage('{FFFF00}[Auto Farm]: {FFFFFF}Dang di den ' .. ten_location)
+                                
+                                -- Luu thoi gian bat dau gieo hat dau tien
+                                if farmStep == 1 and currentTarget == 1 and gieoHatStartTime == 0 then
+                                    gieoHatStartTime = os.clock()
+                                    safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Bat dau dem thoi gian thu hoach!')
+                                end
+                            end
+                        else
+                            checkAndHandleStuck()
+                            
+                            if isAtCoordinate(target_coord.x, target_coord.y, target_coord.z, 3.0) then
+                                isMoving = false
+                                
+                                local ten_location = getTenToaDo(current_location)
+                                safeChatMessage('{00FF00}[Auto Farm]: {FFFFFF}Da den ' .. ten_location)
+                                
+                                clearCharTasks(PLAYER_PED)
+                                executeCommandsAtLocation(current_location)
+                            end
+                        end
+                    else
+                        -- Toa do khong hop le, chuyen sang vi tri tiep theo
+                        safeChatMessage('{FF0000}[Auto Farm]: {FFFFFF}Toa do ' .. getTenToaDo(current_location) .. ' khong hop le!')
+                        currentTarget = currentTarget + 1
+                        if currentTarget > #current_sequence then
+                            nextStep()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function onScriptExit()
+    saveToFile()
+    
+    if autoFarm[0] then
+        clearCharTasks(PLAYER_PED)
+    end
+end
